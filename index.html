@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#2d3a24"><link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png"><title>LEYECO IV GPS Surveyor</title>
+<style>
+:root{--o:#2d3a24;--o2:#44563a;--bg:#f3f5ef;--tx:#1b1f17;--w:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1f16;--tx:#e8ece1;--w:#262d21}}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+#hud{background:var(--o);color:#fff;padding:6px 10px;font-size:13px;display:flex;flex-wrap:wrap;gap:2px 14px;align-items:center}
+#hud b{font-size:15px}#q{padding:1px 8px;border-radius:9px;font-weight:700;color:#000}
+#map{flex:1;position:relative;min-height:0}canvas{width:100%;height:100%;display:block;touch-action:none}
+#cross{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px;pointer-events:none}
+#cross:before,#cross:after{content:"";position:absolute;background:#0ff;box-shadow:0 0 2px #000}
+#cross:before{left:16px;top:0;width:2px;height:34px}#cross:after{top:16px;left:0;height:2px;width:34px}
+#zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
+#info{position:absolute;left:8px;top:8px;background:#000a;color:#fff;padding:3px 8px;border-radius:6px;font-size:12px}
+#attr{position:absolute;right:4px;bottom:2px;font-size:10px;background:#fffa;color:#000;padding:0 3px}
+#bar{display:flex;gap:6px;padding:8px;background:var(--o)}
+button{font:inherit;border:0;border-radius:8px;padding:10px 12px;background:var(--o2);color:#fff;min-height:44px}
+#bar button{flex:1;padding:8px 2px;font-size:13px}button.on{background:#c9a227;color:#000}
+#zoom button{width:44px;background:#000a}
+dialog{border:0;border-radius:12px;padding:14px;width:min(94vw,460px);background:var(--w);color:var(--tx)}
+dialog::backdrop{background:#0008}label{display:block;margin:8px 0 2px;font-size:12px;opacity:.8}
+input,select,textarea{width:100%;font:inherit;padding:8px;border:1px solid #8a9a7a;border-radius:6px;background:var(--bg);color:var(--tx)}
+.row{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}.row button{flex:1}.sec{background:#7a7a7a}.red{background:#a33}
+#list{max-height:45vh;overflow:auto;font-size:12px;margin-top:8px}#list div{padding:4px 0;border-bottom:1px solid #8884;display:flex;gap:6px}
+#list span{flex:1;word-break:break-all}.warn{color:#c60}
+</style></head><body>
+<div id="hud"><span>GPS <span id="q">--</span></span><span>±<b id="acc">--</b> m</span><span id="ll">Lat/Lon: --</span><span id="alt"></span>
+<span>Cursor: <b id="cd">0</b> m</span><span>Poles: <b id="np">0</b> Lines: <b id="nl">0</b> Pending: <b id="npd">0</b></span></div>
+<div id="map"><canvas id="cv"></canvas><div id="cross"></div><div id="info">Pan mode</div>
+<div id="zoom"><button id="zi">+</button><button id="zo">−</button><button id="loc">◎</button></div>
+<div id="attr"></div></div>
+<div id="bar"><button id="bGps">+ WP @GPS</button><button id="bCur">+ WP @✛</button><button id="bLine">Line</button><button id="bData">Data</button><button id="bSet">⚙</button></div>
+
+<dialog id="dWp"><b>Waypoint</b><label>Name / asset label (legacy free text)</label><input id="wName" list="pre" autocomplete="off">
+<datalist id="pre"><option value="PP01/"><option value="UB01/"><option value="OS01/"><option value="AN"><option value="OSRELAY1"></datalist>
+<div id="wMeta" style="font-size:12px;margin-top:6px"></div><div class="row"><button id="wOk">Save</button><button class="sec" id="wNo">Cancel</button></div></dialog>
+
+<dialog id="dLn"><b id="lT">Line</b><label>Class</label><select id="lC"><option>LVSDLine</option><option>LVLine</option><option>MVLine</option></select>
+<label>Phase</label><select id="lP"><option>AN</option><option>BN</option><option>CN</option><option>ABCN</option></select>
+<label>Conductor (AWG, 6/1)</label><select id="lK"><option>AL|6</option><option>AL|2</option><option>ACSR|2</option><option>ACSR|2/0</option><option>ACSR|6</option><option>ACSR|1/0</option></select>
+<div id="lI" style="font-size:12px;margin-top:6px"></div><div class="row"><button id="lOk">Save line</button><button class="sec" id="lNo">Cancel</button></div></dialog>
+
+<dialog id="dData"><b>Data</b><div id="stat" style="font-size:12px;margin:6px 0"></div>
+<div class="row"><button id="xTxt">Export legacy TXT</button><button id="xGj">GeoJSON</button><button id="xCsv">CSV</button><button id="xBk">Backup JSON</button></div>
+<div class="row"><button class="sec" id="iFile">Import TXT / backup</button><button class="sec" id="rev">Review list</button><button class="sec" id="fit">Zoom to data</button></div>
+<input type="file" id="file" multiple accept=".txt,.json" hidden><div id="list"></div><div class="row"><button class="sec" id="dClose">Close</button></div></dialog>
+
+<dialog id="dSet"><b>Settings</b><label>Surveyor</label><input id="sSur"><label>Project</label><input id="sPrj">
+<label>Accuracy thresholds (m): high / good / acceptable</label><div class="row" style="margin:0"><input id="t1" type="number" step="0.5"><input id="t2" type="number" step="0.5"><input id="t3" type="number" step="0.5"></div>
+<label>Map tile URL ({z}/{x}/{y}); blank = no basemap. Use a licensed source.</label><input id="sTile">
+<label>Tile attribution</label><input id="sAttr"><div class="row"><button id="sOk">Save</button><button class="sec" id="sNo">Close</button></div></dialog>
+
+<script>
+"use strict";
+const R=6378137,$=id=>document.getElementById(id);
+const PH={AN:12,BN:13,CN:14,ABCN:0},SZ={"6":28,"2":24,"2/0":21,"1/0":22},KINDS=["LVSDLine","LVLine","MVLine"];
+const COL={HVLine:"#d22",MVLine:"#f80",LVLine:"#2b2",LVSDLine:"#0af"};
+let S={sur:"",prj:"",t:[3,5,10],tile:"https://tile.openstreetmap.org/{z}/{x}/{y}.png",attr:"© OpenStreetMap contributors"};
+let recs=[],db,pos=null,mode="pan",pick=null,sel=null,view={lat:10.38,lon:124.78,z:15},tiles={};
+const hav=(a,b,c,d)=>{const p=Math.PI/180,x=Math.sin((c-a)*p/2)**2+Math.cos(a*p)*Math.cos(c*p)*Math.sin((d-b)*p/2)**2;return 2*R*Math.asin(Math.sqrt(x))};
+const stamp=()=>{const d=new Date();return[`${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`,`${d.getHours()}:${d.getMinutes()}:${d.getSeconds()}`]};
+// ---- legacy codec (matches docs/02: 13-token waypoints, 39-token lines) ----
+const legacyWp=r=>r.raw||["w","d","WAYPOINT",r.lat,r.lon,r.name,r.date,r.time,0,2,48,0,13].join(",");
+function legacyLine(r){if(r.raw)return r.raw;const[m,s]=[r.mat,r.size];
+ if(!(r.phase in PH)||!(s in SZ)||!["AL","ACSR"].includes(m))return null;const f=m==="AL"?1:0;
+ return[r.cls,"d","LineData",r.lat1,r.lon1,r.lat2,r.lon2,r.phase,"AWG","6/1",m,s,"AWG","6/1",m,s,r.len,1.2,1.2,2.25,1.3,1,1.3,PH[r.phase],0,0,f,SZ[s],0,0,f,SZ[s],r.date,r.time,0,2,48,0,13].join(",")}
+function exportLegacy(){const[d,t]=stamp();const out=["Version,212","","WGS 1984 (GPS),217, 6378137, 298.257223563, 0, 0, 0","USER GRID,0,0,0,0,0",""];let skip=0;
+ [...recs].sort((a,b)=>(a.n||0)-(b.n||0)).forEach(r=>{if(r.t==="w")out.push(legacyWp(r));else{const x=legacyLine(r);x?out.push(x):skip++}});
+ return{text:out.join("\r\n")+"\r\n",skip}}
+function parseLegacy(txt,file){let n=0,bad=0;const[d0]=[0];txt.split(/\r?\n/).forEach(l=>{const p=l.split(",");
+ if(p[0]==="w"&&p[2]==="WAYPOINT"&&p.length>=13&&isFinite(p[3])){add({t:"w",lat:+p[3],lon:+p[4],name:p.slice(5,p.length-7).join(","),date:p[p.length-7],time:p[p.length-6],raw:l,src:file});n++}
+ else if(p[0].endsWith("Line")&&p[2]==="LineData"&&p.length===39){add({t:"l",cls:p[0],lat1:+p[3],lon1:+p[4],lat2:+p[5],lon2:+p[6],phase:p[7],mat:p[10],size:p[11],len:+p[16],raw:l,src:file});n++}
+ else if(l.trim()&&!/^(Version|WGS|USER GRID)/.test(l)){bad++}});return{n,bad}}
+// ---- storage ----
+const idb=()=>new Promise((ok,no)=>{const q=indexedDB.open("leyeco4-surveyor",1);q.onupgradeneeded=()=>{q.result.createObjectStore("recs",{keyPath:"id"});q.result.createObjectStore("meta")};q.onsuccess=()=>ok(q.result);q.onerror=no});
+const tx=(st,m,fn)=>new Promise((ok,no)=>{const t=db.transaction(st,m);fn(t.objectStore(st));t.oncomplete=ok;t.onerror=no});
+const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random().toString(16).slice(2);
+let seq=0;function add(r){r.n=++seq;r.id=uid();r.pending=r.pending??true;r.src=r.src||"field";recs.push(r);tx("recs","readwrite",s=>s.put(r))}
+function del(id){recs=recs.filter(r=>r.id!==id);tx("recs","readwrite",s=>s.delete(id))}
+const saveS=()=>tx("meta","readwrite",s=>s.put(S,"settings"));
+// ---- GPS ----
+const band=a=>a<=S.t[0]?["High","#4c4"]:a<=S.t[1]?["Good","#9d4"]:a<=S.t[2]?["Warn","#fc3"]:["Low","#f66"];
+function gps(){if(!navigator.geolocation){$("q").textContent="n/a";return}
+ navigator.geolocation.watchPosition(p=>{pos={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy,alt:p.coords.altitude};
+  const[b,c]=band(pos.acc);$("q").textContent=b;$("q").style.background=c;$("acc").textContent=pos.acc.toFixed(1);
+  $("ll").textContent=`Lat/Lon: ${pos.lat.toFixed(6)}, ${pos.lon.toFixed(6)}`;$("alt").textContent=pos.alt!=null?`Alt ${pos.alt.toFixed(0)} m`:"";draw()},
+  e=>{$("q").textContent="ERR";$("q").style.background="#f66"},{enableHighAccuracy:true,maximumAge:1000,timeout:20000})}
+// ---- map ----
+const cv=$("cv"),g=cv.getContext("2d");
+const px=(lat,lon,z=view.z)=>{const s=256*2**z,x=(lon+180)/360*s,y=(.5-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/(2*Math.PI))*s;return[x,y]};
+const unpx=(x,y,z=view.z)=>{const s=256*2**z;return[(2*Math.atan(Math.exp((.5-y/s)*2*Math.PI))-Math.PI/2)*180/Math.PI,x/s*360-180]};
+function sc(lat,lon){const[cx,cy]=px(view.lat,view.lon),[x,y]=px(lat,lon);return[x-cx+cv.width/2,y-cy+cv.height/2]}
+function center(){return unpx(...px(view.lat,view.lon))}
+function resize(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;draw()}
+function draw(){const d=devicePixelRatio||1;g.setTransform(1,0,0,1,0,0);g.fillStyle="#cfd8c6";g.fillRect(0,0,cv.width,cv.height);
+ const W=cv.width,H=cv.height,[cx,cy]=px(view.lat,view.lon);
+ if(S.tile){const z=view.z,n=2**z,x0=Math.floor((cx-W/2)/256),x1=Math.floor((cx+W/2)/256),y0=Math.floor((cy-H/2)/256),y1=Math.floor((cy+H/2)/256);
+  for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){if(y<0||y>=n)continue;const xx=((x%n)+n)%n,u=S.tile.replace("{z}",z).replace("{x}",xx).replace("{y}",y);let im=tiles[u];
+   if(!im){im=tiles[u]=new Image();im.onload=draw;im.src=u}
+   if(im.complete&&im.naturalWidth)g.drawImage(im,x*256-cx+W/2,y*256-cy+H/2)}}
+ $("attr").textContent=S.tile?S.attr:"";g.lineWidth=3*d;
+ recs.forEach(r=>{if(r.t!=="l")return;const a=sc(r.lat1,r.lon1),b=sc(r.lat2,r.lon2);g.strokeStyle=COL[r.cls]||"#888";g.beginPath();g.moveTo(...a);g.lineTo(...b);g.stroke()});
+ recs.forEach(r=>{if(r.t!=="w")return;const[x,y]=sc(r.lat,r.lon);if(x<-20||y<-20||x>W+20||y>H+20)return;g.fillStyle=(sel&&sel.id===r.id)?"#ff0":"#fff";g.strokeStyle="#000";g.lineWidth=2;g.beginPath();g.arc(x,y,5*d,0,7);g.fill();g.stroke()});
+ if(pos){const[x,y]=sc(pos.lat,pos.lon),m=pos.acc/(R*Math.cos(pos.lat*Math.PI/180)*2*Math.PI/(256*2**view.z));g.fillStyle="#08f3";g.beginPath();g.arc(x,y,Math.max(6*d,m),0,7);g.fill();g.fillStyle="#08f";g.beginPath();g.arc(x,y,5*d,0,7);g.fill()}
+ const c=center();$("cd").textContent=pos?Math.round(hav(pos.lat,pos.lon,c[0],c[1])):0;stats()}
+function stats(){const w=recs.filter(r=>r.t==="w").length,l=recs.length-w;$("np").textContent=w;$("nl").textContent=l;$("npd").textContent=recs.filter(r=>r.pending).length}
+let ptrs=new Map(),pd=0,moved=0;
+cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);moved=0;pd=0};
+cv.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;const o=ptrs.get(e.pointerId);const d=devicePixelRatio||1;
+ if(ptrs.size===2){const ps=[...ptrs.values()],a=Math.hypot(ps[0][0]-ps[1][0],ps[0][1]-ps[1][1]);ptrs.set(e.pointerId,[e.clientX,e.clientY]);const q=[...ptrs.values()],b=Math.hypot(q[0][0]-q[1][0],q[0][1]-q[1][1]);if(Math.abs(b-a)>8){zoom(b>a?1:-1);ptrs.forEach((v,k)=>ptrs.set(k,v))}return}
+ const dx=e.clientX-o[0],dy=e.clientY-o[1];moved+=Math.abs(dx)+Math.abs(dy);ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+ const[cx,cy]=px(view.lat,view.lon);[view.lat,view.lon]=unpx(cx-dx*d,cy-dy*d);draw()};
+cv.onpointerup=e=>{ptrs.delete(e.pointerId);if(moved<8&&ptrs.size===0)tap(e)};
+cv.onwheel=e=>{e.preventDefault();zoom(e.deltaY<0?1:-1)};
+function zoom(d){view.z=Math.max(3,Math.min(20,view.z+d));draw()}
+$("zi").onclick=()=>zoom(1);$("zo").onclick=()=>zoom(-1);$("loc").onclick=()=>{if(pos){view.lat=pos.lat;view.lon=pos.lon;draw()}};
+function nearest(e){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1,x=(e.clientX-r.left)*d,y=(e.clientY-r.top)*d;let b=null,bd=28*d;
+ recs.forEach(w=>{if(w.t!=="w")return;const[a,c]=sc(w.lat,w.lon),k=Math.hypot(a-x,c-y);if(k<bd){bd=k;b=w}});return b}
+function tap(e){const w=nearest(e);
+ if(mode==="line"){if(!w){$("info").textContent="Tap an existing waypoint";return}
+  if(!pick){pick=w;sel=w;$("info").textContent="Line: tap END waypoint";draw();return}
+  if(pick.id===w.id){return}openLine(pick,w);return}
+ sel=w;$("info").textContent=w?`${w.name} (${w.lat.toFixed(6)}, ${w.lon.toFixed(6)})`:"Pan mode";draw()}
+// ---- waypoint capture ----
+let cap=null;
+function capture(p,src){if(!p){alert("No position yet.");return}
+ if(p.lat===0&&p.lon===0){alert("0,0 is not a valid field location. Not saved.");return}
+ cap={lat:p.lat,lon:p.lon,acc:p.acc,src};$("wName").value="";
+ $("wMeta").innerHTML=`${p.lat.toFixed(7)}, ${p.lon.toFixed(7)}`+(p.acc!=null?` · ±${p.acc.toFixed(1)} m (${band(p.acc)[0]})`:" · from crosshair")+(p.acc>S.t[2]?`<br><b class="warn">Low accuracy (&gt;${S.t[2]} m). Saving needs your confirmation.</b>`:"");$("dWp").showModal()}
+$("bGps").onclick=()=>capture(pos&&{lat:pos.lat,lon:pos.lon,acc:pos.acc},"gps");
+$("bCur").onclick=()=>{const c=center();capture({lat:c[0],lon:c[1],acc:null},"cursor")};
+$("wNo").onclick=()=>$("dWp").close();
+$("wOk").onclick=()=>{if(cap.acc>S.t[2]&&!confirm("Accuracy is low. Save anyway?"))return;const[d,t]=stamp();
+ add({t:"w",lat:cap.lat,lon:cap.lon,name:$("wName").value.trim(),date:d,time:t,acc:cap.acc,how:cap.src,by:S.sur,prj:S.prj});$("dWp").close();draw()};
+// ---- line ----
+let lp=null;
+$("bLine").onclick=()=>{mode=mode==="line"?"pan":"line";pick=null;$("bLine").classList.toggle("on",mode==="line");$("info").textContent=mode==="line"?"Line: tap START waypoint":"Pan mode"};
+function openLine(a,b){lp=[a,b];const L=hav(a.lat,a.lon,b.lat,b.lon);$("lI").innerHTML=`Endpoint (straight-line) distance: <b>${L.toFixed(2)} m</b>${L===0?'<br><b class="warn">Zero length</b>':""}`;$("dLn").showModal()}
+$("lNo").onclick=()=>{$("dLn").close();pick=null;draw()};
+$("lOk").onclick=()=>{const[a,b]=lp,[m,s]=$("lK").value.split("|"),[d,t]=stamp();
+ if(recs.some(r=>r.t==="l"&&r.cls===$("lC").value&&((r.lat1===a.lat&&r.lon1===a.lon&&r.lat2===b.lat&&r.lon2===b.lon)||(r.lat1===b.lat&&r.lon1===b.lon&&r.lat2===a.lat&&r.lon2===a.lon)))&&!confirm("Duplicate segment. Save anyway?"))return;
+ add({t:"l",cls:$("lC").value,lat1:a.lat,lon1:a.lon,lat2:b.lat,lon2:b.lon,phase:$("lP").value,mat:m,size:s,len:hav(a.lat,a.lon,b.lat,b.lon),date:d,time:t,by:S.sur,prj:S.prj});
+ $("dLn").close();pick=null;sel=null;$("info").textContent="Line saved. Tap next START";draw()};
+// ---- data ----
+const dl=(name,body,type)=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([body],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5e3)};
+const base=()=>(S.prj||"survey").replace(/\W+/g,"_")+"_"+new Date().toISOString().slice(0,10);
+$("bData").onclick=()=>{$("stat").textContent=`${recs.filter(r=>r.t==="w").length} waypoints, ${recs.filter(r=>r.t==="l").length} lines, ${recs.filter(r=>r.pending).length} not yet synced (sync server: pending feature)`;$("list").innerHTML="";$("dData").showModal()};
+$("dClose").onclick=()=>$("dData").close();
+$("xTxt").onclick=()=>{const x=exportLegacy();if(x.skip&&!confirm(x.skip+" line(s) use values with no verified legacy code and will be left OUT of the TXT (still in GeoJSON/CSV). Continue?"))return;dl(base()+".txt",x.text,"text/plain")};
+$("xGj").onclick=()=>dl(base()+".geojson",JSON.stringify({type:"FeatureCollection",features:recs.map(r=>r.t==="w"?{type:"Feature",geometry:{type:"Point",coordinates:[r.lon,r.lat]},properties:{name:r.name,date:r.date,time:r.time,acc:r.acc,by:r.by,legacy_raw:r.raw}}:{type:"Feature",geometry:{type:"LineString",coordinates:[[r.lon1,r.lat1],[r.lon2,r.lat2]]},properties:{class:r.cls,phase:r.phase,material:r.mat,size:r.size,length_m:r.len,by:r.by,legacy_raw:r.raw}})}),"application/geo+json");
+$("xCsv").onclick=()=>{const q=v=>`"${String(v??"").replace(/"/g,'""')}"`,h="type,class,name,lat,lon,lat2,lon2,phase,material,size,length_m,date,time,accuracy_m,surveyor,source\n";
+ dl(base()+".csv","\ufeff"+h+recs.map(r=>[r.t,r.cls,r.name,r.lat??r.lat1,r.lon??r.lon1,r.lat2,r.lon2,r.phase,r.mat,r.size,r.len,r.date,r.time,r.acc,r.by,r.src].map(q).join(",")).join("\n"),"text/csv")};
+$("xBk").onclick=()=>dl(base()+"_backup.json",JSON.stringify({app:"leyeco4-surveyor",v:1,settings:S,recs}),"application/json");
+$("iFile").onclick=()=>$("file").click();
+$("file").onchange=async e=>{let msg=[];for(const f of e.target.files){const t=await f.text();
+  if(f.name.endsWith(".json")){try{const j=JSON.parse(t);const ids=new Set(recs.map(r=>r.id));let n=0;(j.recs||[]).forEach(r=>{if(!ids.has(r.id)){recs.push(r);tx("recs","readwrite",s=>s.put(r));n++}});msg.push(`${f.name}: ${n} new records`)}catch{msg.push(f.name+": invalid backup")}}
+  else{const r=parseLegacy(t,f.name);msg.push(`${f.name}: ${r.n} records${r.bad?`, ${r.bad} unrecognised lines skipped`:""}`)}}
+ e.target.value="";$("list").innerHTML=msg.map(m=>`<div>${m}</div>`).join("");fitAll();draw()};
+function fitAll(){const p=recs.filter(r=>r.t==="w");if(!p.length)return;const la=p.map(r=>r.lat),lo=p.map(r=>r.lon);view.lat=(Math.min(...la)+Math.max(...la))/2;view.lon=(Math.min(...lo)+Math.max(...lo))/2;
+ const r=cv.getBoundingClientRect();let z=18;for(;z>3;z--){const[x1,y1]=px(Math.max(...la),Math.min(...lo),z),[x2,y2]=px(Math.min(...la),Math.max(...lo),z);if(x2-x1<r.width*.9&&y2-y1<r.height*.9)break}view.z=z}
+$("fit").onclick=()=>{fitAll();draw();$("dData").close()};
+$("rev").onclick=()=>{const w=recs.filter(r=>r.t==="w"),out=[],seen=new Set();
+ w.forEach(r=>{if(r.lat===0&&r.lon===0)out.push(["NULL 0,0",r.name,r.id])});
+ recs.filter(r=>r.t==="l").forEach(r=>{const L=hav(r.lat1,r.lon1,r.lat2,r.lon2),k=r.cls+[r.lat1,r.lon1,r.lat2,r.lon2].join();
+  if(L===0)out.push(["Zero-length "+r.cls,r.len+" m stored",r.id]);if(seen.has(k))out.push(["Duplicate "+r.cls,"",r.id]);seen.add(k);
+  if(L>250)out.push(["Span >250 m "+r.cls,L.toFixed(0)+" m",r.id]);if(!r.phase||!r.mat)out.push(["Missing phase/conductor",r.cls,r.id])});
+ $("list").innerHTML=out.length?out.map(o=>`<div><span class="warn">${o[0]}: ${o[1]}</span><button class="red" data-id="${o[2]}" style="min-height:30px;padding:2px 8px">Del</button></div>`).join(""):"<div>No issues found.</div>";
+ $("list").querySelectorAll("button").forEach(b=>b.onclick=()=>{if(confirm("Delete this record?")){del(b.dataset.id);b.parentNode.remove();draw()}})};
+// ---- settings ----
+function loadSetUI(){$("sSur").value=S.sur;$("sPrj").value=S.prj;[0,1,2].forEach(i=>$("t"+(i+1)).value=S.t[i]);$("sTile").value=S.tile;$("sAttr").value=S.attr}
+$("bSet").onclick=()=>{loadSetUI();$("dSet").showModal()};$("sNo").onclick=()=>$("dSet").close();
+$("sOk").onclick=()=>{S.sur=$("sSur").value;S.prj=$("sPrj").value;S.t=[+$("t1").value||3,+$("t2").value||5,+$("t3").value||10];S.tile=$("sTile").value.trim();S.attr=$("sAttr").value;saveS();$("dSet").close();draw()};
+// ---- boot ----
+(async()=>{db=await idb();await new Promise(ok=>{const t=db.transaction(["recs","meta"]);t.objectStore("recs").getAll().onsuccess=e=>{recs=e.target.result.sort((a,b)=>(a.n||0)-(b.n||0));seq=recs.reduce((m,r)=>Math.max(m,r.n||0),0)};
+ t.objectStore("meta").get("settings").onsuccess=e=>{if(e.target.result)S={...S,...e.target.result}};t.oncomplete=ok});
+ addEventListener("resize",resize);resize();if(recs.length)fitAll();draw();gps();
+ if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js")})();
+</script></body></html>
